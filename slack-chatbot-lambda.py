@@ -5,7 +5,7 @@ import os
 from base64 import b64decode
 from urllib.parse import parse_qs
 
-bucket_name = 'tell-me-a-joke'
+bucket_name = 'tell-me-a-joke-1'
 object_key = 'jokes.txt'
 ENCRYPTED_EXPECTED_TOKEN = os.environ['kmsEncryptedToken']
 
@@ -14,6 +14,19 @@ model_id = "anthropic.claude-3-sonnet-20240229-v1:0"
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 s3 = boto3.client('s3')
+
+def get_last_30_jokes():
+    try:
+        response = s3.get_object(Bucket=bucket_name, Key=object_key)
+        content = response['Body'].read().decode('utf-8')
+        jokes = content.split('\n')
+        # Get the last 30 jokes, ensuring no empty lines are included
+        last_30_jokes = [joke for joke in jokes if joke][-30:]
+        return last_30_jokes
+    except Exception as err:
+        logger.error("Error retrieving jokes from S3: %s", err)
+        return []
+
 
 def append_string_to_s3_file(string_to_append):
     response = s3.get_object(Bucket=bucket_name, Key=object_key)
@@ -30,13 +43,17 @@ def respond(err, res=None):
 
 def get_a_joke():
     try:
+        last_30_jokes = get_last_30_jokes()
+        context_jokes = " ".join(last_30_jokes)  # Combine jokes into a single string
+
+        # Model invocation with context to avoid last 30 jokes
         response = bedrock_client.invoke_model(
             modelId=model_id,
             body=json.dumps({
                 "anthropic_version": "bedrock-2023-05-31",
                 "max_tokens": 1024,
                 "messages": [
-                    {"role": "user", "content": [{"type": "text", "text": "You are a smart jokester. Please tell me a joke and return the joke as a JSON object with joke field as the joke itself and answer as the answer to the joke. Do not return anything else. Do not return the answer to the joke in the joke field. For example for this joke -- Why did the tomato turn red? Because it saw the salad dressing! -- you should return joke as -Why did the tomato turn red- and answer as -Because it saw the salad dressing-"}]}
+                    {"role": "user", "content": [{"type": "text", "text": f"Please tell me a new joke that is not any of these: {context_jokes}. You are a smart jokester. Please return the joke as a JSON object with joke field as the joke itself and answer as the answer to the joke, stringify the JSON. Do not return the answer in the joke field."}]}
                 ],
             }),
         )
